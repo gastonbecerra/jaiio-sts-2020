@@ -28,19 +28,24 @@ table(estimulos$estimulo)
 respuestas <- terminos %>% pull(id) %>% as.character() %>% unique()
 
 estimulos_bd <- estimulos %>% filter(estimulo == "Big data") %>% pull(id) %>% as.character()
-socio_bd <- sociodemograficos %>% filter( id %in% estimulos_bd, id %in% respuestas)
+socio_bd <- sociodemograficos %>% filter( id %in% estimulos_bd, 
+                                          id %in% respuestas,
+                                          edad != "2" )
 
 rm(respuestas)
 
 # n
 nrow(socio_bd)
 
-# sexo
-table(socio_bd$sexo) / nrow(socio_bd) * 100
-
 # edad
 summary(as.numeric(as.character(socio_bd$edad)))
 sd(as.numeric(as.character(socio_bd$edad)))
+
+# sexo
+table(socio_bd$sexo) / nrow(socio_bd) * 100
+
+sort(table(socio_bd$carrera))
+sort(table(socio_bd$carrera)) / nrow(socio_bd) * 100
 
 # agrupar carreras 
 socio_bd <- socio_bd %>% mutate(
@@ -62,8 +67,12 @@ tabla_carrera <- socio_bd %>%
   summarise(n=n(), p=n() / nrow(socio_bd)) %>% inner_join(
     socio_bd %>% 
       group_by(carrera2) %>%
-      summarise_if( .predicate = is.logical, .funs = function(x) sum(x) / n() ) , by="carrera2")
-tabla_carrera
+      summarise_if( .predicate = is.logical, .funs = function(x) sum(x) / n() ) , by="carrera2") 
+tabla_carrera 
+
+socio_bd %>% 
+  group_by(carrera2) %>%
+  summarise_if( .predicate = is.logical, .funs = function(x) sum(x) / n() )
 
 # 3: limpiamos y lemmatizamos ------------------------------------------------
 
@@ -368,17 +377,19 @@ V(terminos_bd_graph)$q <- nodos$q
 g <- terminos_bd_graph %>%
   as_tbl_graph() %>%
   activate(nodes) %>%
-  mutate(community = as.factor(group_louvain()))
+  mutate(community = as.factor(group_leading_eigen()))
+  # mutate(community = as.factor(group_louvain()))
+  # mutate(community = as.factor(group_infomap()))
 
 comunidades <- g %>% activate(nodes) %>% as.data.frame() %>% 
   select(palabra=name, valoracion, community) %>% 
-  group_by(community) %>% summarize(val = mean(valoracion), palabras=paste(palabra, collapse = " "))
-
-comunidades
+  group_by(community) %>% 
+  summarize(val = mean(valoracion), palabras=paste(palabra, collapse = " ")) %>%
+  arrange(val)
 
 g %>% 
-  ggraph(layout = "graphopt" ) + 
-  geom_edge_link(width = 1, colour = "lightgray") + # falta correlation
+  ggraph(layout = "kk" ) + 
+  geom_edge_link(aes(edge_alpha = correlation), color="gray", show.legend = TRUE )+
   # geom_node_point(aes(colour = community), size = 4) +
   geom_node_point(aes(size = count, color = community, shape = factor(q))) +
   geom_node_text(aes(label = name, color = community), repel = TRUE)+
@@ -387,60 +398,14 @@ g %>%
 g %>%
   as_tbl_graph() %>%
   activate(nodes) %>%
-  mutate(comunidad = as.factor(group_louvain())) %>% 
-  ggraph(layout = "graphopt" ) + 
+  mutate(comunidad = as.factor(group_leading_eigen())) %>% 
+    ggraph(layout = "stress" ) + 
   geom_edge_link(width = 1, colour = "lightgray") + # falta correlation
-  # geom_node_point(aes(colour = community), size = 4) +
-  # geom_node_point(aes(size = count, color = comunidad, shape = factor(q))) +
-  geom_node_point(aes(size = 20, color = valoracion, shape = comunidad), show.legend = FALSE) +
+  geom_node_point(aes(color = valoracion, shape = comunidad), size = 5, show.legend = TRUE) +
   geom_node_text(aes(label = name, color = valoracion), repel = TRUE, show.legend = FALSE) +
   scale_colour_gradient(low = "red", high = "green", na.value = NA) +
   theme_graph()
 
+comunidades
+
 rm(terminos_bd_corr, terminos_bd_graph, nodos, g)
-
-# 8: comparacion con otros datasets ---------------------------------------------------------------
-
-estimulos_ai <- estimulos %>% filter(estimulo == "Inteligencia artificial") %>% pull(id) %>% as.character()
-terminos_ai <- terminos %>% filter( id %in% estimulos_ai)
-estimulos_bd <- estimulos %>% filter(estimulo == "Big data") %>% pull(id) %>% as.character()
-terminos_bd <- terminos %>% filter( id %in% estimulos_bd, !is.na(palabra))
-estimulos_con <- estimulos %>% filter(estimulo == "Conocimiento") %>% pull(id) %>% as.character()
-terminos_con <- terminos %>% filter( id %in% estimulos_con)
-estimulos_cd <- estimulos %>% filter(estimulo == "Ciencia de datos") %>% pull(id) %>% as.character()
-terminos_cd <- terminos %>% filter( id %in% estimulos_cd)
-rm(estimulos_ai, estimulos_bd, estimulos_cd, estimulos_con)
-
-# solapamiento de diccionarios 
-
-ellegards_index <- function(dix1, dix2) {
-  nc <- length(intersect(dix1,dix2)) 
-  n1 <- length(dix1) 
-  n2 <- length(dix2)
-  return(nc / sqrt(n1*n2))
-}
-
-palabras_ai <- unique(terminos_ai$palabra)
-palabras_bd <- unique(terminos_bd$palabra)
-palabras_cd <- unique(terminos_cd$palabra)
-palabras_con <- unique(terminos_con$palabra)
-
-dix1 <- palabras_ai
-dix2 <- palabras_bd
-dix3 <- palabras_cd
-dix4 <- palabras_con
-v1 <- paste0('dix', 1:4)
-v1 <- c("palabras_ai","palabras_bd","palabras_cd","palabras_con")
-out <- outer(v1, v1, Vectorize(function(x, y) ellegards_index(get(x), get(y))))
-dimnames(out) <- list(v1, v1)
-out
-dist(out)
-plot(hclust(dist(out)))
-
-library(corrplot)
-corrplot(out, method="color", addCoef.col = "black", diag = FALSE, type="upper")
-
-rm(dix1,dix2,dix3,dix4,out,v1)
-rm(ellegards_index)
-
-rm(palabras_ai, palabras_bd, palabras_cd, palabras_con)
